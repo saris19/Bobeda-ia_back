@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+
+# Datos locales: llave maestra, secreto JWT, base de datos y archivos cifrados
+data/
+*.db
+
+# Secretos
+.env
+.env.*
+*.key
+*.secret
+
+# Sistema
+.DS_Store
