@@ -66,3 +66,104 @@ El texto de los documentos nunca se guarda. Cada palabra relevante se normaliza 
 transforma con HMAC-SHA256 usando una llave derivada de la llave raíz. La relevancia combina contenido cifrado
 (55 %), metadatos con tolerancia a errores (35 %) e intención detectada por el clasificador (10 %).
 
+## 4. Ejecutar en tu computador
+
+Necesitas **Python 3.10+** (Anaconda sirve).
+
+```bash
+conda create -n boveda python=3.11 -y     # solo la primera vez
+conda activate boveda
+pip install -r requirements-dev.txt        # solo la primera vez
+python run.py
+```
+
+API en <http://127.0.0.1:8000> y documentación interactiva en <http://127.0.0.1:8000/docs>.
+Usuario inicial en desarrollo: **admin** / **Admin123\*** (en producción la contraseña la genera Render).
+
+Para usar la interfaz web, en otra terminal ejecuta el repositorio `boveda-ia-frontend` (`npm run dev`).
+
+## 5. Pruebas y demostración
+
+```bash
+python -m pytest -v
+```
+
+22 pruebas: cifrado y manipulación, validadores, enmascaramiento, roles y permisos, políticas por
+sensibilidad, fuerza bruta, versiones, papelera, correcciones y reentrenamiento, rotación de llaves, índice
+ciego y búsqueda, panel, migraciones, reglas de detección, respuestas automáticas, Isolation Forest y alertas.
+
+Con la API encendida, `python scripts/simulate_attacks.py` lanza ataques reales (fuerza bruta, descarga
+masiva, accesos denegados y exploración) y muestra las alertas generadas.
+
+## 6. API principal
+
+| Método | Ruta | Rol |
+|---|---|---|
+| POST | `/api/auth/login` | público |
+| GET | `/api/stats` · `/api/search` | autenticado |
+| GET / POST | `/api/documents` | autenticado / admin, editor |
+| GET | `/api/documents/{id}/download` | permiso de lectura |
+| GET / POST | `/api/documents/{id}/versions` | lectura / gestión |
+| GET · POST | `/api/documents/{id}/versions/{n}/download` · `/restore` | lectura · gestión |
+| PATCH | `/api/documents/{id}/classification` | gestión (admin, editor) |
+| POST · DELETE | `/api/documents/{id}/share` · `/permissions/{pid}` | gestión |
+| DELETE | `/api/documents/{id}` (a la papelera) | gestión |
+| GET · POST · DELETE | `/api/trash` · `/api/trash/{id}/restore` · `/api/trash/{id}` | propietario, admin |
+| GET · PATCH | `/api/alerts` · `/api/alerts/summary` · `/api/alerts/{id}` | admin |
+| POST | `/api/alerts/model/retrain` | admin |
+| GET · POST | `/api/admin/security` · `/api/admin/rotate-key` · `/api/admin/classifier/retrain` | admin |
+| GET / POST / PATCH | `/api/users` · `/api/users/{id}` · `/api/users/{id}/unblock` | admin |
+| GET | `/api/audit` | admin |
+
+## 7. Configuración (variables de entorno)
+
+| Variable | Uso | Por defecto |
+|---|---|---|
+| `VAULT_MASTER_KEY` | Llave raíz en base64 (32 bytes) | se genera en `data/master.key` |
+| `VAULT_JWT_SECRET` | Secreto para firmar tokens | se genera en `data/jwt.secret` |
+| `VAULT_ADMIN_USER` / `VAULT_ADMIN_PASSWORD` | Administrador inicial | `admin` / `Admin123*` |
+| `VAULT_ENV` | `production` exige llaves y PostgreSQL definidos | `development` |
+| `DATABASE_URL` | Conexión PostgreSQL (la pone Render) | SQLite local |
+| `VAULT_STORAGE_BACKEND` | `disk` o `database` | `disk` local / `database` producción |
+| `VAULT_CORS_ORIGINS` · `VAULT_CORS_ORIGIN_REGEX` | Orígenes del frontend permitidos | — |
+| `VAULT_TIMEZONE` | Zona horaria para la regla de horario | `America/Bogota` |
+| `VAULT_OFF_HOURS_START` · `VAULT_OFF_HOURS_END` | Horario no laboral | 22 · 6 |
+| `VAULT_TRASH_DAYS` | Días en la papelera | 30 |
+| `VAULT_DOWNLOAD_BLOCK_MINUTES` | Pausa de descargas tras descarga masiva | 15 |
+| `VAULT_TOKEN_MINUTES` · `VAULT_MAX_UPLOAD_MB` | Duración de sesión · tamaño máximo | 60 · 10 |
+
+> ⚠️ Si se pierde la llave raíz (`VAULT_MASTER_KEY`), los documentos **no se pueden recuperar**.
+> La carpeta `data/` (llave, secreto y base local) está en `.gitignore`: nunca la subas al repositorio.
+
+## 8. Despliegue en Render
+
+**Si ya tienes la API publicada** (servicio `boveda-ia-api` conectado al repositorio anterior `boveda-ia`):
+no crees un Blueprint nuevo, porque generaría otra base de datos y otra llave maestra y los documentos
+existentes dejarían de abrirse. En su lugar:
+
+1. Render → **boveda-ia-api → Settings → Build & Deploy → Repository** → elige `boveda-ia-backend`.
+2. En el mismo lugar, deja **Root Directory** vacío (antes era `backend`).
+3. **Manual Deploy → Deploy latest commit** y prueba
+   <https://boveda-ia-api.onrender.com/api/health> → `{"status":"ok","version":"1.0.0"}`.
+
+**Despliegue desde cero:** Render → **New → Blueprint** → selecciona este repositorio. El `render.yaml` crea
+la API y la base PostgreSQL, y genera la llave maestra, el secreto JWT y la contraseña del admin (en
+**Environment**, junto a `VAULT_ADMIN_PASSWORD`). Respalda `VAULT_MASTER_KEY` en un lugar seguro.
+
+| Síntoma | Causa probable |
+|---|---|
+| "Could not open requirements file" | El servicio todavía tiene Root Directory `backend`: déjalo vacío |
+| "Faltan variables de entorno obligatorias" | Falta alguna variable del Blueprint |
+| `blocked by CORS policy` en el navegador | La URL del frontend no coincide con `VAULT_CORS_ORIGINS` (https, sin `/` final) |
+| Error 409 "Falla de integridad" al descargar | `VAULT_MASTER_KEY` cambió respecto a la que cifró el documento |
+
+El plan gratuito duerme la API tras 15 minutos sin tráfico (el primer acceso tarda ~1 minuto) y la base
+PostgreSQL gratuita vence a los 30 días.
+
+## 9. Limitaciones conocidas
+
+- El clasificador parte de 210 ejemplos semilla; mejora con las correcciones de los usuarios.
+- La detección de datos sensibles se basa en patrones; no reconoce nombres propios.
+- Los PDF escaneados no tienen texto extraíble sin OCR.
+- El modelo de anomalías vive en memoria: se reentrena al arrancar y periódicamente desde la bitácora.
+- El índice ciego revela si dos documentos comparten una palabra (no cuál) a quien acceda a la base de datos.
